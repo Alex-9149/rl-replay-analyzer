@@ -62,12 +62,12 @@ self.onmessage = async (e) => {
     const decoder = new TextDecoder('utf-8');
     const timeline = JSON.parse(decoder.decode(timelineBytes));
 
-    self.postMessage({ type: 'progress', step: 'Extrayendo telemetría espacial 10Hz (posiciones, velocidades y calor)...', pct: 68 });
+    self.postMessage({ type: 'progress', step: 'Extrayendo telemetría física de alta frecuencia (30Hz)...', pct: 68 });
     const nd = get_ndarray_with_info(
       replayBytes,
       ['BallRigidBody', 'SecondsRemaining', 'CurrentTime'],
       ['PlayerRigidBody', 'PlayerBoost'],
-      10.0
+      30.0
     );
 
     self.postMessage({ type: 'progress', step: 'Calculando métricas avanzadas de jugadores, turbos y mapas...', pct: 88 });
@@ -475,7 +475,7 @@ function buildFullAnalysis(timeline, nd, fileName) {
   // Sort matchEvents chronologically
   matchEvents.sort((a, b) => a.time - b.time);
 
-  // Process 10Hz Spatial NDArray for Heatmaps, 2D/3D Replay Player, Avg Boost, and Avg Speed
+  // Process 30Hz Spatial NDArray for smooth 2D/3D Replay Player, Heatmaps, Avg Boost, and Avg Speed
   const rows = nd?.array_data || [];
   const globalHeaders = nd?.metadata?.column_headers?.global_headers || [];
   const hasCurrentTime = globalHeaders.length >= 14;
@@ -484,6 +484,7 @@ function buildFullAnalysis(timeline, nd, fileName) {
 
   const replaySamples = [];
   let firstSampleTime = null;
+  const prevHeadings = new Array(numPlayers).fill(0);
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
@@ -496,9 +497,9 @@ function buildFullAnalysis(timeline, nd, fileName) {
     const ballVy = row[7] || 0;
     const ballVz = row[8] || 0;
     const secRem = Math.max(0, Math.round(row[12] || 0));
-    const rawTime = hasCurrentTime ? row[13] : r * 0.1;
+    const rawTime = hasCurrentTime ? row[13] : r / 30;
     if (firstSampleTime === null) firstSampleTime = rawTime;
-    const relTime = Math.max(0, Math.round((rawTime - firstSampleTime) * 100) / 100);
+    const relTime = Math.max(0, Math.round((rawTime - firstSampleTime) * 1000) / 1000);
 
     const framePlayers = [];
 
@@ -516,16 +517,21 @@ function buildFullAnalysis(timeline, nd, fileName) {
       const rawBoost = row[base + 12] || 0;
 
       const validPos = !Number.isNaN(px) && !Number.isNaN(py);
-      const safeX = validPos ? Math.round(px) : 0;
-      const safeY = validPos ? Math.round(py) : 0;
-      const safeZ = validPos ? Math.round(pz) : 17;
+      const safeX = validPos ? Math.round(px * 10) / 10 : 0;
+      const safeY = validPos ? Math.round(py * 10) / 10 : 0;
+      const safeZ = validPos ? Math.round(pz * 10) / 10 : 17;
 
       const speedUus = Math.hypot(vx, vy, vz);
       const speedKmh = Math.round(uusToKmh(speedUus) * 10) / 10;
       const boostPct = Math.round(rawBoostToPct(rawBoost));
 
-      // Heading angle in XY plane from velocity (or rotation fallback)
-      const heading = speedUus > 25 ? Math.atan2(vy, vx) : rz;
+      // Heading angle in XY plane from velocity (preserving last heading when car slows down)
+      const horizSpeed = Math.hypot(vx, vy);
+      let heading = prevHeadings[i];
+      if (horizSpeed > 35) {
+        heading = Math.atan2(vy, vx);
+        prevHeadings[i] = heading;
+      }
 
       framePlayers.push({
         x: safeX,
@@ -534,16 +540,20 @@ function buildFullAnalysis(timeline, nd, fileName) {
         rx: Math.round(rx * 100) / 100,
         ry: Math.round(ry * 100) / 100,
         rz: Math.round(rz * 100) / 100,
-        heading: Math.round(heading * 100) / 100,
+        vx: Math.round(vx),
+        vy: Math.round(vy),
+        vz: Math.round(vz),
+        heading: Math.round(heading * 1000) / 1000,
         speedKmh,
         boostPct,
       });
 
-      if (validPos) {
+      // Subsample at ~10Hz (every 3rd frame) for 2D KDE Heatmaps to keep heatmap rendering instantaneous
+      if (validPos && r % 3 === 0) {
         players[i].positions.push({
-          x: safeX,
-          y: safeY,
-          z: safeZ,
+          x: Math.round(safeX),
+          y: Math.round(safeY),
+          z: Math.round(safeZ),
           speedKmh,
           boostPct,
           ballX: Math.round(ballX),
@@ -556,14 +566,20 @@ function buildFullAnalysis(timeline, nd, fileName) {
       t: relTime,
       clock: secRem,
       ball: {
-        x: Math.round(ballX),
-        y: Math.round(ballY),
-        z: Math.round(ballZ),
+        x: Math.round(ballX * 10) / 10,
+        y: Math.round(ballY * 10) / 10,
+        z: Math.round(ballZ * 10) / 10,
+        vx: Math.round(ballVx),
+        vy: Math.round(ballVy),
+        vz: Math.round(ballVz),
         speedKmh: Math.round(uusToKmh(Math.hypot(ballVx, ballVy, ballVz))),
       },
       cars: framePlayers,
     });
   }
+
+  // Smooth step-wise network replicated coordinates using velocity-aware keyframe interpolation
+  smoothNetworkKeyframes(replaySamples, numPlayers);
 
   // Finalize per-player derived percentages and averages
   for (const p of players) {
@@ -676,4 +692,90 @@ function buildFullAnalysis(timeline, nd, fileName) {
     boostTimelineSeries,
     replaySamples,
   };
+}
+
+/**
+ * Rocket League network actors only replicate position updates when needed (often every 2-4 frames),
+ * causing raw sampled arrays to hold identical coordinates for 2-3 frames and then jump.
+ * This function detects those flat plateau frames and smoothly interpolates between true network updates.
+ */
+function smoothNetworkKeyframes(samples, numPlayers) {
+  const n = samples.length;
+  if (n < 3) return;
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const lerpAngle = (a, b, t) => {
+    let d = b - a;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return a + d * t;
+  };
+
+  // 1. Smooth Ball trajectory across flat replication steps
+  let lastChange = 0;
+  for (let i = 1; i < n; i++) {
+    const bPrev = samples[lastChange].ball;
+    const bCur = samples[i].ball;
+    const moved =
+      Math.abs(bCur.x - bPrev.x) > 0.2 ||
+      Math.abs(bCur.y - bPrev.y) > 0.2 ||
+      Math.abs(bCur.z - bPrev.z) > 0.2;
+
+    if (moved || i === n - 1) {
+      const gap = i - lastChange;
+      const dist = Math.hypot(bCur.x - bPrev.x, bCur.y - bPrev.y);
+      // Only interpolate if it's a short replication plateau (<= 8 frames) and not a goal/kickoff teleport
+      if (gap > 1 && gap <= 8 && dist < 1600) {
+        const t0 = samples[lastChange].t;
+        const span = samples[i].t - t0;
+        if (span > 0.0001) {
+          for (let k = lastChange + 1; k < i; k++) {
+            const alpha = (samples[k].t - t0) / span;
+            samples[k].ball.x = Math.round(lerp(bPrev.x, bCur.x, alpha) * 10) / 10;
+            samples[k].ball.y = Math.round(lerp(bPrev.y, bCur.y, alpha) * 10) / 10;
+            samples[k].ball.z = Math.round(lerp(bPrev.z, bCur.z, alpha) * 10) / 10;
+          }
+        }
+      }
+      lastChange = i;
+    }
+  }
+
+  // 2. Smooth each Car's trajectory and heading across flat replication steps
+  for (let p = 0; p < numPlayers; p++) {
+    let lastCarChange = 0;
+    for (let i = 1; i < n; i++) {
+      const cPrev = samples[lastCarChange].cars[p];
+      const cCur = samples[i].cars[p];
+      if (!cPrev || !cCur) continue;
+
+      const moved =
+        Math.abs(cCur.x - cPrev.x) > 0.2 ||
+        Math.abs(cCur.y - cPrev.y) > 0.2 ||
+        Math.abs(cCur.z - cPrev.z) > 0.2;
+
+      if (moved || i === n - 1) {
+        const gap = i - lastCarChange;
+        const dist = Math.hypot(cCur.x - cPrev.x, cCur.y - cPrev.y);
+        if (gap > 1 && gap <= 8 && dist < 1400) {
+          const t0 = samples[lastCarChange].t;
+          const span = samples[i].t - t0;
+          if (span > 0.0001) {
+            for (let k = lastCarChange + 1; k < i; k++) {
+              const alpha = (samples[k].t - t0) / span;
+              const cMid = samples[k].cars[p];
+              cMid.x = Math.round(lerp(cPrev.x, cCur.x, alpha) * 10) / 10;
+              cMid.y = Math.round(lerp(cPrev.y, cCur.y, alpha) * 10) / 10;
+              cMid.z = Math.round(lerp(cPrev.z, cCur.z, alpha) * 10) / 10;
+              cMid.rx = Math.round(lerpAngle(cPrev.rx, cCur.rx, alpha) * 100) / 100;
+              cMid.ry = Math.round(lerpAngle(cPrev.ry, cCur.ry, alpha) * 100) / 100;
+              cMid.rz = Math.round(lerpAngle(cPrev.rz, cCur.rz, alpha) * 100) / 100;
+              cMid.heading = Math.round(lerpAngle(cPrev.heading, cCur.heading, alpha) * 1000) / 1000;
+            }
+          }
+        }
+        lastCarChange = i;
+      }
+    }
+  }
 }

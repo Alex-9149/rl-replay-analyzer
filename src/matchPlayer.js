@@ -39,8 +39,10 @@ export class MatchPlayerController {
     this.ballTrailLine = null;
     this.ballTrailPoints = [];
 
-    // UI callbacks
+    // UI callbacks & caching
     this.onTimeUpdate = null;
+    this.lastTelemetryUpdateMs = 0;
+    this.pitchBgCanvas = null;
   }
 
   initDOM({ canvas2d, container3d, onTimeUpdate }) {
@@ -102,7 +104,7 @@ export class MatchPlayerController {
     this.lastTick = performance.now();
     const loop = (now) => {
       if (!this.isPlaying) return;
-      const dt = (now - this.lastTick) / 1000;
+      const dt = Math.min(0.1, (now - this.lastTick) / 1000);
       this.lastTick = now;
 
       this.currentTime += dt * this.playbackSpeed;
@@ -111,7 +113,7 @@ export class MatchPlayerController {
         this.isPlaying = false;
       }
 
-      this.renderCurrentFrame();
+      this.renderCurrentFrame(dt);
       if (this.onTimeUpdate) {
         this.onTimeUpdate(this.currentTime, this.duration, this.isPlaying);
       }
@@ -227,41 +229,64 @@ export class MatchPlayerController {
       : PLAYER_COLORS_ORANGE[idx % PLAYER_COLORS_ORANGE.length];
   }
 
-  renderCurrentFrame() {
+  renderCurrentFrame(dt = 0.016) {
     const state = this.getInterpolatedState(this.currentTime);
     if (!state) return;
 
     if (this.mode === '2d') {
       this.render2D(state);
     } else {
-      this.render3D(state);
+      this.render3D(state, dt);
     }
-    this.updateLiveTelemetryCards(state);
+
+    const now = performance.now();
+    if (!this.isPlaying || now - this.lastTelemetryUpdateMs > 95) {
+      this.lastTelemetryUpdateMs = now;
+      this.updateLiveTelemetryCards(state);
+    }
   }
 
   /* ==========================================================================
      MODO 2D: PIZARRA TÁCTICA INTERACTIVA
      ========================================================================== */
+  ensurePitchBgCached(width, height) {
+    if (
+      this.pitchBgCanvas &&
+      this.pitchBgCanvas.width === width &&
+      this.pitchBgCanvas.height === height
+    ) {
+      return;
+    }
+    this.pitchBgCanvas = document.createElement('canvas');
+    this.pitchBgCanvas.width = width;
+    this.pitchBgCanvas.height = height;
+    const bgCtx = this.pitchBgCanvas.getContext('2d');
+
+    drawRocketLeaguePitch(bgCtx, width, height);
+
+    // Pre-dibujar las 34 pastillas de turbo en el buffer estático
+    for (const pad of BOOST_PADS) {
+      const { cx, cy } = rlToCanvas(pad.x, pad.y, width, height);
+      bgCtx.beginPath();
+      bgCtx.arc(cx, cy, pad.type === 'big' ? 5.5 : 3, 0, Math.PI * 2);
+      bgCtx.fillStyle =
+        pad.type === 'big' ? 'rgba(234, 179, 8, 0.35)' : 'rgba(148, 163, 184, 0.22)';
+      bgCtx.fill();
+    }
+  }
+
   render2D(state) {
     if (!this.canvas2d || !this.ctx2d) return;
     const ctx = this.ctx2d;
     const width = this.canvas2d.width;
     const height = this.canvas2d.height;
 
-    drawRocketLeaguePitch(ctx, width, height);
+    this.ensurePitchBgCached(width, height);
+    ctx.drawImage(this.pitchBgCanvas, 0, 0);
 
-    // 1. Dibujar las 34 pastillas de turbo sutilmente en el suelo
-    for (const pad of BOOST_PADS) {
-      const { cx, cy } = rlToCanvas(pad.x, pad.y, width, height);
-      ctx.beginPath();
-      ctx.arc(cx, cy, pad.type === 'big' ? 5.5 : 3, 0, Math.PI * 2);
-      ctx.fillStyle = pad.type === 'big' ? 'rgba(234, 179, 8, 0.35)' : 'rgba(148, 163, 184, 0.22)';
-      ctx.fill();
-    }
-
-    // 2. Dibujar estela reciente del balón (últimos 2 segundos)
+    // 2. Dibujar estela reciente del balón (últimos ~1.8 segundos a 30Hz = 54 muestras)
     const idx = state.sampleIndex || 0;
-    const startIdx = Math.max(0, idx - 22);
+    const startIdx = Math.max(0, idx - 54);
     if (idx > startIdx) {
       ctx.save();
       ctx.beginPath();
@@ -724,7 +749,7 @@ export class MatchPlayerController {
     cg.spriteTex.needsUpdate = true;
   }
 
-  render3D(state) {
+  render3D(state, dt = 0.016) {
     this.ensure3DInitialized();
     if (!this.scene || !this.renderer) return;
 
@@ -763,32 +788,33 @@ export class MatchPlayerController {
         cg.sprite.visible = false;
       } else {
         cg.sprite.visible = true;
-        this.updateCarSprite(cg, car.boostPct);
+        // Actualizar textura solo cuando el boost cambia al menos 2% para no subir texturas a la GPU en cada frame
+        this.updateCarSprite(cg, Math.round(car.boostPct / 2) * 2);
       }
     });
 
-    // 3. Actualizar cámara según el modo seleccionado
+    // 3. Actualizar cámara con amortiguación independiente del framerate
+    const camSmooth = 1 - Math.exp(-10 * dt);
+    const povSmooth = 1 - Math.exp(-18 * dt);
+
     if (this.cameraMode === 'ballcam') {
-      // Cámara de retransmisión siguiendo el balón suavemente
       const targetCamPos = new THREE.Vector3(bPos.x * 0.55, 2200 + bPos.y * 0.4, -5200);
-      this.camera.position.lerp(targetCamPos, 0.08);
+      this.camera.position.lerp(targetCamPos, camSmooth);
       this.camera.lookAt(bPos.x, bPos.y * 0.6, bPos.z * 0.6);
     } else if (activePovIdx >= 0) {
       const car = state.cars[activePovIdx];
       if (car) {
         const cPos = this.rlTo3D(car.x, car.y, car.z);
-        // Vector hacia el balón (Ball Cam de jugador en Rocket League)
         const toBall = new THREE.Vector3().subVectors(bPos, cPos);
         toBall.y = 0;
         if (toBall.lengthSq() < 10) toBall.set(1, 0, 0);
         toBall.normalize();
 
-        // Cámara POV un poco más alejada y elevada para mejor visión del coche y del campo
         const camPos = cPos
           .clone()
           .sub(toBall.clone().multiplyScalar(540))
           .add(new THREE.Vector3(0, 210, 0));
-        this.camera.position.lerp(camPos, 0.25);
+        this.camera.position.lerp(camPos, povSmooth);
         this.camera.lookAt(bPos.x, Math.max(120, bPos.y), bPos.z);
       }
     } else if (this.controls) {
