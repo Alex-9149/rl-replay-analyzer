@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RL Replay Analyzer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <input id="fileInput" type="file" accept=".replay" hidden />
+
+    <!-- PANTALLA 1: SOLO EL RECUADRO PARA SUBIR LA REPLAY -->
+    <div id="uploadView" class="upload-screen">
+      <div class="upload-container">
+        <div id="dropZone" class="upload-box">
+          <div class="upload-icon-wrap">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+          </div>
+          <h1 class="upload-heading">Subir archivo <code>.replay</code></h1>
+          <p class="upload-desc">
+            Arrastra tu repetición de Rocket League aquí o haz clic para seleccionarla desde tu equipo.
+          </p>
+          <button id="btnSelectFile" type="button" class="btn-upload-primary">
+            Seleccionar archivo .replay
+          </button>
+          <span class="upload-hint">
+            Ruta habitual: <code>Documentos\My Games\Rocket League\TAGame\DemosEpic</code>
+          </span>
+        </div>
+
+        <!-- Estado de Progreso dentro de la pantalla de subida -->
+        <div id="loadingSection" class="upload-status hidden">
+          <div class="status-row">
+            <span id="loadingTitle" class="status-filename">Procesando archivo...</span>
+            <span id="loadingPct" class="status-pct mono">0%</span>
+          </div>
+          <div class="progress-track">
+            <div id="loadingBar" class="progress-fill" style="width: 0%"></div>
+          </div>
+          <p id="loadingStep" class="status-step">Iniciando lector binario...</p>
+        </div>
+
+        <!-- Mensaje de error si el archivo no es válido -->
+        <div id="errorSection" class="upload-error hidden">
+          <strong>No se pudo leer el archivo:</strong>
+          <span id="errorMessage"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PANTALLA 2: VISTA DE ANÁLISIS ORGANIZADA EN PESTAÑAS -->
+    <div id="analysisView" class="analysis-screen hidden">
+      <!-- Barra superior sobria con el marcador compacto y navegación principal -->
+      <header class="app-header">
+        <div class="header-inner">
+          <!-- Botón Volver + Resumen del partido a la izquierda -->
+          <div class="match-banner">
+            <button id="btnBackToUpload" type="button" class="btn-outline">
+              Volver
+            </button>
+
+            <div class="match-score-pill">
+              <span id="scoreBlue" class="score-num score-blue mono">0</span>
+              <span class="score-sep">:</span>
+              <span id="scoreOrange" class="score-num score-orange mono">0</span>
+            </div>
+
+            <div class="match-meta-info">
+              <div class="match-title-row">
+                <span id="metaReplayName" class="match-name">Replay</span>
+                <span id="metaForfeit" class="tag-ff hidden">Abandono (FF)</span>
+              </div>
+              <div class="match-sub-row">
+                <span id="metaMode">2v2</span>
+                <span class="dot-sep">·</span>
+                <span id="metaMap">Estadio</span>
+                <span class="dot-sep">·</span>
+                <span id="metaDuration">5:00</span>
+                <span class="dot-sep">·</span>
+                <span id="metaDate">Fecha</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pestañas de Navegación Principal -->
+          <nav class="main-tabs" id="mainNavTabs" aria-label="Secciones del análisis">
+            <button type="button" class="main-tab active" data-view="overview">Resumen</button>
+            <button type="button" class="main-tab" data-view="stats">Estadísticas</button>
+            <button type="button" class="main-tab" data-view="timeline">Línea de Tiempo</button>
+            <button type="button" class="main-tab" data-view="spatial">Mapas (Calor y Turbos)</button>
+          </nav>
+        </div>
+      </header>
+
+      <!-- Contenedor de las Vistas por Pestaña -->
+      <main class="workspace">
+        <!-- PESTAÑA 1: RESUMEN DEL PARTIDO Y JUGADORES -->
+        <section id="view-overview" class="tab-pane active">
+          <div class="pane-header">
+            <div>
+              <h2 class="pane-title">Resumen por Jugador</h2>
+              <p class="pane-subtitle">Rendimiento general, efectividad de tiro, velocidad media y gestión de turbo en el partido</p>
+            </div>
+            <div class="rosters-inline">
+              <div id="blueRoster" class="roster-group"></div>
+              <div id="orangeRoster" class="roster-group"></div>
+            </div>
+          </div>
+
+          <div id="playerCardsGrid" class="player-cards-grid"></div>
+        </section>
+
+        <!-- PESTAÑA 2: ESTADÍSTICAS DETALLADAS Y GRÁFICAS -->
+        <section id="view-stats" class="tab-pane hidden">
+          <div class="pane-toolbar">
+            <!-- Sub-pestañas de Categoría -->
+            <div class="sub-tabs" id="categoryTabs">
+              <button class="sub-tab active" data-cat="combat" type="button">General</button>
+              <button class="sub-tab" data-cat="boost" type="button">Turbo (Usado y Perdido)</button>
+              <button class="sub-tab" data-cat="movement" type="button">Velocidad y Movimiento</button>
+              <button class="sub-tab" data-cat="positioning" type="button">Posicionamiento y Rotación</button>
+              <button class="sub-tab" data-cat="camera" type="button">Cámara/Mecánicas</button>
+            </div>
+
+            <!-- Selector Tabla vs Gráficas -->
+            <div class="segmented-control">
+              <button id="btnViewTable" class="seg-btn active" type="button">Tabla de datos</button>
+              <button id="btnViewCharts" class="seg-btn" type="button">Gráficas</button>
+            </div>
+          </div>
+
+          <!-- Tabla -->
+          <div id="statsTableContainer" class="table-panel"></div>
+
+          <!-- Gráficas -->
+          <div id="statsChartsContainer" class="charts-grid hidden">
+            <div class="panel-box">
+              <h3 id="chartPrimaryTitle" class="panel-box-title">Comparativa Principal</h3>
+              <div class="chart-wrap">
+                <canvas id="chartPrimary"></canvas>
+              </div>
+            </div>
+            <div class="panel-box">
+              <h3 id="chartSecondaryTitle" class="panel-box-title">Desglose por Jugador</h3>
+              <div class="chart-wrap">
+                <canvas id="chartSecondary"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PESTAÑA 3: LÍNEA DE TIEMPO DEL PARTIDO -->
+        <section id="view-timeline" class="tab-pane hidden">
+          <div class="pane-toolbar">
+            <div>
+              <h2 class="pane-title">Cronología del Partido</h2>
+              <p class="pane-subtitle">Sucesión de goles, salvadas, tiros a puerta, asistencias y demoliciones</p>
+            </div>
+            <div class="filter-pills" id="timelineFilters">
+              <button class="filter-pill active" data-filter="all" type="button">Todos</button>
+              <button class="filter-pill" data-filter="Goal" type="button">Goles</button>
+              <button class="filter-pill" data-filter="Save" type="button">Salvadas</button>
+              <button class="filter-pill" data-filter="Shot" type="button">Tiros</button>
+              <button class="filter-pill" data-filter="Demo" type="button">Demoliciones</button>
+            </div>
+          </div>
+
+          <div class="panel-box timeline-panel">
+            <div id="timelineAxis" class="timeline-axis"></div>
+            <div id="timelineTrack" class="timeline-track"></div>
+            <div id="timelineEventsList" class="timeline-events-grid"></div>
+          </div>
+
+          <div class="panel-box">
+            <h3 class="panel-box-title">Evolución de Turbo Usado Acumulado</h3>
+            <div class="chart-wrap-sm">
+              <canvas id="timelineEvolutionCanvas"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- PESTAÑA 4: MAPAS ESPACIALES (HEATMAP Y TURBOS) -->
+        <section id="view-spatial" class="tab-pane hidden">
+          <div class="pane-toolbar">
+            <div class="control-inline">
+              <span class="toolbar-label">Jugador:</span>
+              <div id="spatialPlayerSelector" class="player-selector-group"></div>
+            </div>
+
+            <div class="control-inline">
+              <div id="heatmapSubfilters" class="filter-pills">
+                <button class="filter-pill active" data-hmfilter="all" type="button">Todo el partido</button>
+                <button class="filter-pill" data-hmfilter="attack" type="button">En ataque</button>
+                <button class="filter-pill" data-hmfilter="defense" type="button">En defensa</button>
+                <button class="filter-pill" data-hmfilter="supersonic" type="button">Supersónico</button>
+              </div>
+
+              <div class="segmented-control">
+                <button id="btnMapHeatmap" class="seg-btn active" type="button">Mapa de Calor</button>
+                <button id="btnMapBoostPads" class="seg-btn" type="button">Mapa de Turbos (34 Pads)</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="spatial-layout">
+            <div class="pitch-panel">
+              <canvas id="pitchCanvas" width="920" height="600"></canvas>
+              <div id="padTooltip" class="pad-tooltip hidden"></div>
+            </div>
+
+            <aside id="spatialSidebar" class="spatial-sidebar"></aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
