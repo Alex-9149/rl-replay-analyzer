@@ -682,6 +682,7 @@ export class MatchPlayerController {
       this.carGroups.push({
         group,
         flameMesh,
+        sprite,
         spriteCanvas,
         spriteCtx: spriteCanvas.getContext('2d'),
         spriteTex: sTex,
@@ -740,6 +741,10 @@ export class MatchPlayerController {
     hPos.needsUpdate = true;
 
     // 2. Posicionar y orientar los Coches
+    const activePovIdx = this.cameraMode.startsWith('pov:')
+      ? Number(this.cameraMode.split(':')[1])
+      : -1;
+
     state.cars.forEach((car, i) => {
       const cg = this.carGroups[i];
       if (!cg) return;
@@ -752,7 +757,14 @@ export class MatchPlayerController {
       cg.group.rotation.set(car.rx * 0.4, yaw3D, car.ry * 0.4);
 
       cg.flameMesh.visible = car.speedKmh > 62;
-      this.updateCarSprite(cg, car.boostPct);
+
+      // Ocultar la etiqueta flotante sobre el propio coche si la cámara está en su POV
+      if (i === activePovIdx) {
+        cg.sprite.visible = false;
+      } else {
+        cg.sprite.visible = true;
+        this.updateCarSprite(cg, car.boostPct);
+      }
     });
 
     // 3. Actualizar cámara según el modo seleccionado
@@ -761,9 +773,8 @@ export class MatchPlayerController {
       const targetCamPos = new THREE.Vector3(bPos.x * 0.55, 2200 + bPos.y * 0.4, -5200);
       this.camera.position.lerp(targetCamPos, 0.08);
       this.camera.lookAt(bPos.x, bPos.y * 0.6, bPos.z * 0.6);
-    } else if (this.cameraMode.startsWith('pov:')) {
-      const pIdx = Number(this.cameraMode.split(':')[1]) || 0;
-      const car = state.cars[pIdx];
+    } else if (activePovIdx >= 0) {
+      const car = state.cars[activePovIdx];
       if (car) {
         const cPos = this.rlTo3D(car.x, car.y, car.z);
         // Vector hacia el balón (Ball Cam de jugador en Rocket League)
@@ -772,12 +783,13 @@ export class MatchPlayerController {
         if (toBall.lengthSq() < 10) toBall.set(1, 0, 0);
         toBall.normalize();
 
+        // Cámara POV un poco más alejada y elevada para mejor visión del coche y del campo
         const camPos = cPos
           .clone()
-          .sub(toBall.clone().multiplyScalar(340))
-          .add(new THREE.Vector3(0, 145, 0));
+          .sub(toBall.clone().multiplyScalar(540))
+          .add(new THREE.Vector3(0, 210, 0));
         this.camera.position.lerp(camPos, 0.25);
-        this.camera.lookAt(bPos.x, Math.max(110, bPos.y), bPos.z);
+        this.camera.lookAt(bPos.x, Math.max(120, bPos.y), bPos.z);
       }
     } else if (this.controls) {
       this.controls.update();
