@@ -2,6 +2,13 @@ import { BOOST_PADS, formatSeconds } from './constants.js';
 import { renderPositionHeatmap, renderBoostPadsMap } from './pitchRenderer.js';
 import { renderTimelineEvolutionChart, renderCategoryCharts } from './chartsManager.js';
 import { MatchPlayerController } from './matchPlayer.js';
+import {
+  saveReplayToHistory,
+  getReplayHistoryList,
+  loadReplayFromHistory,
+  deleteReplayFromHistory,
+  clearReplayHistory,
+} from './historyStorage.js';
 
 const matchPlayer = new MatchPlayerController();
 
@@ -32,6 +39,7 @@ function initWorker() {
       hideLoading();
       state.analysis = msg.analysis;
       state.selectedPlayerKey = msg.analysis.players[0]?.key || null;
+      saveReplayToHistory(msg.analysis).then(() => refreshHistoryUI());
       openAnalysisScreen();
     } else if (msg.type === 'error') {
       hideLoading();
@@ -744,15 +752,36 @@ function setupInteractions() {
     fileInput.click();
   });
 
+  const btnToggleHistory = document.getElementById('btnToggleHistory');
+  const historyDrawer = document.getElementById('historyDrawer');
+  const btnClearHistory = document.getElementById('btnClearHistory');
+
+  btnToggleHistory.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const isHidden = historyDrawer.classList.contains('hidden');
+    if (isHidden) {
+      await refreshHistoryUI();
+      historyDrawer.classList.remove('hidden');
+    } else {
+      historyDrawer.classList.add('hidden');
+    }
+  });
+
+  btnClearHistory.addEventListener('click', async () => {
+    await clearReplayHistory();
+    await refreshHistoryUI();
+  });
+
   dropZone.addEventListener('click', () => fileInput.click());
 
-  btnBackToUpload.addEventListener('click', () => {
+  btnBackToUpload.addEventListener('click', async () => {
     matchPlayer.pause();
     fileInput.value = '';
     hideLoading();
     document.getElementById('errorSection').classList.add('hidden');
     document.getElementById('analysisView').classList.add('hidden');
     document.getElementById('uploadView').classList.remove('hidden');
+    await refreshHistoryUI();
   });
 
   fileInput.addEventListener('change', async (e) => {
@@ -985,6 +1014,68 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+async function refreshHistoryUI() {
+  const list = await getReplayHistoryList();
+  const badge = document.getElementById('historyCountBadge');
+  const container = document.getElementById('historyListContainer');
+  if (badge) badge.textContent = String(list.length);
+  if (!container) return;
+
+  if (list.length === 0) {
+    container.innerHTML = `<div class="history-empty">Aún no has analizado ninguna replay en este navegador.</div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  for (const item of list) {
+    const row = document.createElement('div');
+    row.className = 'history-item';
+
+    const blueNames = (item.bluePlayers || []).join(', ');
+    const orangeNames = (item.orangePlayers || []).join(', ');
+
+    row.innerHTML = `
+      <div class="history-item-left">
+        <div class="history-score-box">
+          <span class="score-blue">${item.team0Score ?? 0}</span>
+          <span class="score-sep">:</span>
+          <span class="score-orange">${item.team1Score ?? 0}</span>
+        </div>
+        <div class="history-meta">
+          <div class="history-title">${escapeHtml(item.replayName || item.fileName)}</div>
+          <div class="history-sub">
+            ${escapeHtml(item.modeLabel || '')} · ${escapeHtml(item.mapName || '')} · ${escapeHtml(item.date || '')}
+            ${blueNames || orangeNames ? ` · ${escapeHtml(blueNames)} vs ${escapeHtml(orangeNames)}` : ''}
+          </div>
+        </div>
+      </div>
+      <button type="button" class="btn-delete-item" title="Eliminar del historial">✕</button>
+    `;
+
+    // Al hacer clic en la fila, carga instantáneamente esa replay guardada
+    row.addEventListener('click', async (e) => {
+      if (e.target.closest('.btn-delete-item')) return;
+      const savedAnalysis = await loadReplayFromHistory(item.id);
+      if (savedAnalysis) {
+        state.analysis = savedAnalysis;
+        state.selectedPlayerKey = savedAnalysis.players[0]?.key || null;
+        openAnalysisScreen();
+      }
+    });
+
+    // Botón para borrar esa replay concreta del historial
+    const delBtn = row.querySelector('.btn-delete-item');
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await deleteReplayFromHistory(item.id);
+      await refreshHistoryUI();
+    });
+
+    container.appendChild(row);
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   setupInteractions();
+  refreshHistoryUI();
 });

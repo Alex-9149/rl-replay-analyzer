@@ -30,12 +30,26 @@
           <p class="upload-desc">
             Arrastra tu repetición de Rocket League aquí o haz clic para seleccionarla desde tu equipo.
           </p>
-          <button id="btnSelectFile" type="button" class="btn-upload-primary">
-            Seleccionar archivo .replay
-          </button>
+          <div class="upload-actions-row">
+            <button id="btnSelectFile" type="button" class="btn-upload-primary">
+              Seleccionar archivo .replay
+            </button>
+            <button id="btnToggleHistory" type="button" class="btn-upload-secondary">
+              Historial de replays (<span id="historyCountBadge" class="mono">0</span>)
+            </button>
+          </div>
           <span class="upload-hint">
             Ruta habitual: <code>Documentos\My Games\Rocket League\TAGame\DemosEpic</code>
           </span>
+        </div>
+
+        <!-- Panel desplegable con las últimas 20 replays analizadas por el usuario -->
+        <div id="historyDrawer" class="history-drawer hidden">
+          <div class="history-drawer-header">
+            <span class="history-drawer-title">Últimas replays analizadas (máx. 20)</span>
+            <button id="btnClearHistory" type="button" class="btn-text-danger">Vaciar historial</button>
+          </div>
+          <div id="historyListContainer" class="history-list"></div>
         </div>
 
         <!-- Estado de Progreso dentro de la pantalla de subida -->

@@ -91,7 +91,7 @@ code,
 
 .upload-container {
   width: 100%;
-  max-width: 520px;
+  max-width: 580px;
 }
 
 .upload-box {
@@ -142,13 +142,21 @@ code,
   margin: 0 auto 22px;
 }
 
+.upload-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .btn-upload-primary {
   background: var(--blue);
   color: #ffffff;
   border: none;
   border-radius: 6px;
   padding: 10px 20px;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 600;
   cursor: pointer;
   transition: background-color 0.15s ease;
@@ -156,6 +164,153 @@ code,
 
 .btn-upload-primary:hover {
   background: #2563eb;
+}
+
+.btn-upload-secondary {
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 16px;
+  font-size: 0.86rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-upload-secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+/* Cajón desplegable de Historial de Replays */
+.history-drawer {
+  margin-top: 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.history-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 16px;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border);
+}
+
+.history-drawer-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.btn-text-danger {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.btn-text-danger:hover {
+  color: #fb7185;
+}
+
+.history-list {
+  max-height: 310px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.history-item:last-child {
+  border-bottom: none;
+}
+
+.history-item:hover {
+  background: var(--bg-elevated);
+}
+
+.history-item-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.history-score-box {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.history-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.history-title {
+  font-weight: 600;
+  font-size: 0.84rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-sub {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-delete-item {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.btn-delete-item:hover {
+  background: rgba(244, 63, 94, 0.12);
+  color: #fb7185;
 }
 
 .upload-hint {
