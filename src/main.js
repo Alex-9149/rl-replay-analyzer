@@ -1,10 +1,13 @@
 import { BOOST_PADS, formatSeconds } from './constants.js';
 import { renderPositionHeatmap, renderBoostPadsMap } from './pitchRenderer.js';
 import { renderTimelineEvolutionChart, renderCategoryCharts } from './chartsManager.js';
+import { MatchPlayerController } from './matchPlayer.js';
+
+const matchPlayer = new MatchPlayerController();
 
 const state = {
   analysis: null,
-  activeMainTab: 'overview', // 'overview' | 'stats' | 'timeline' | 'spatial'
+  activeMainTab: 'overview', // 'overview' | 'stats' | 'timeline' | 'spatial' | 'player'
   timelineFilter: 'all',
   statsViewMode: 'table', // 'table' | 'charts'
   statsCategory: 'combat', // 'combat' | 'boost' | 'movement' | 'positioning' | 'camera'
@@ -85,6 +88,7 @@ function openAnalysisScreen() {
   renderStatsSection();
   renderTimelineSection(analysis);
   renderSpatialControls(analysis);
+  setupMatchPlayerForAnalysis(analysis);
 
   // Activar la primera pestaña por defecto ("Resumen")
   switchMainTab('overview');
@@ -93,13 +97,17 @@ function openAnalysisScreen() {
 function switchMainTab(viewName) {
   state.activeMainTab = viewName;
 
+  if (viewName !== 'player') {
+    matchPlayer.pause();
+  }
+
   // Actualizar botones de navegación
   for (const btn of document.querySelectorAll('#mainNavTabs .main-tab')) {
     btn.classList.toggle('active', btn.dataset.view === viewName);
   }
 
   // Mostrar únicamente la sección de la pestaña activa
-  const views = ['overview', 'stats', 'timeline', 'spatial'];
+  const views = ['overview', 'stats', 'timeline', 'spatial', 'player'];
   for (const v of views) {
     const pane = document.getElementById(`view-${v}`);
     if (pane) {
@@ -115,6 +123,11 @@ function switchMainTab(viewName) {
     renderTimelineEvolutionChart('timelineEvolutionCanvas', state.analysis);
   } else if (viewName === 'spatial') {
     renderSpatialMap();
+  } else if (viewName === 'player') {
+    if (matchPlayer.mode === '3d') {
+      matchPlayer.resize3D();
+    }
+    matchPlayer.renderCurrentFrame();
   }
 }
 
@@ -474,12 +487,15 @@ function renderTimelineSection(analysis) {
     const marker = document.createElement('div');
     marker.className = `tl-marker team-${ev.team} ev-${ev.type}`;
     marker.style.left = `${pctPos}%`;
-    marker.title = `[${formatSeconds(ev.time)}] ${ev.detail}`;
+    marker.title = `[${formatSeconds(ev.time)}] ${ev.detail} (Clic para ver jugada en Partido 2D/3D)`;
     marker.textContent = codeForType(ev.type);
+    marker.addEventListener('click', () => jumpToMatchPlayerMoment(Math.max(0, ev.time - 5)));
     track.appendChild(marker);
 
     const pill = document.createElement('div');
     pill.className = `tl-event-pill ${ev.team === 0 ? 'pill-blue' : 'pill-orange'}`;
+    pill.style.cursor = 'pointer';
+    pill.title = 'Clic para reproducir desde 5 segundos antes en Partido 2D/3D';
     pill.innerHTML = `
       <div class="tl-pill-top">
         <span class="tl-pill-badge">${labelForType(ev.type)}</span>
@@ -487,8 +503,15 @@ function renderTimelineSection(analysis) {
       </div>
       <div class="tl-pill-desc">${escapeHtml(ev.detail)}</div>
     `;
+    pill.addEventListener('click', () => jumpToMatchPlayerMoment(Math.max(0, ev.time - 5)));
     list.appendChild(pill);
   }
+}
+
+function jumpToMatchPlayerMoment(timeSec) {
+  switchMainTab('player');
+  matchPlayer.seek(timeSec);
+  matchPlayer.play();
 }
 
 /* ==========================================================================
@@ -639,9 +662,78 @@ function renderSpatialMap() {
 }
 
 /* ==========================================================================
+   PESTAÑA 5: PARTIDO 2D/3D (REPRODUCTOR INTERACTIVO)
+   ========================================================================== */
+function setupMatchPlayerForAnalysis(analysis) {
+  matchPlayer.loadMatch(analysis);
+
+  const seekInput = document.getElementById('playerSeekInput');
+  const totalLbl = document.getElementById('playerTotalTime');
+  const curLbl = document.getElementById('playerCurrentTime');
+  const btnPlay = document.getElementById('btnPlayPause');
+  const markersWrap = document.getElementById('playerScrubberMarkers');
+  const goalShortcuts = document.getElementById('playerGoalShortcuts');
+  const camSelect = document.getElementById('selectPlayerCamera');
+
+  const duration = Math.max(1, matchPlayer.duration);
+  seekInput.max = duration.toFixed(1);
+  seekInput.value = '0';
+  curLbl.textContent = '0:00';
+  totalLbl.textContent = formatSeconds(duration);
+  btnPlay.textContent = 'Reproducir';
+
+  // Opciones de cámara en 3D (Libre, Seguimiento Balón y POV de cada jugador)
+  camSelect.innerHTML = `
+    <option value="orbit">Libre (Rotar con ratón)</option>
+    <option value="ballcam">Seguimiento del Balón (TV)</option>
+    ${analysis.players
+      .map((p, idx) => `<option value="pov:${idx}">POV: ${escapeHtml(p.name)}</option>`)
+      .join('')}
+  `;
+
+  // Marcadores de goles en la barra de progreso y botones de acceso directo (-5s antes de cada gol)
+  markersWrap.innerHTML = '';
+  goalShortcuts.innerHTML = '';
+
+  const goals = analysis.matchEvents.filter(ev => ev.type === 'Goal');
+  goals.forEach((g, idx) => {
+    const pct = Math.min(99, Math.max(1, (g.time / duration) * 100));
+    const tick = document.createElement('div');
+    tick.className = 'scrubber-goal-tick';
+    tick.style.left = `${pct}%`;
+    tick.style.background = g.team === 0 ? 'var(--blue-light)' : 'var(--orange-light)';
+    markersWrap.appendChild(tick);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'filter-pill';
+    btn.style.borderColor = g.team === 0 ? 'rgba(59, 130, 246, 0.45)' : 'rgba(249, 115, 22, 0.45)';
+    btn.textContent = `Gol ${idx + 1} (${formatSeconds(g.time)})`;
+    btn.title = `${g.detail} — Ir a 5 segundos antes del gol`;
+    btn.addEventListener('click', () => {
+      matchPlayer.seek(Math.max(0, g.time - 5));
+      matchPlayer.play();
+      btnPlay.textContent = 'Pausar';
+    });
+    goalShortcuts.appendChild(btn);
+  });
+}
+
+/* ==========================================================================
    EVENTOS DE INTERFAZ
    ========================================================================== */
 function setupInteractions() {
+  // Inicializar referencias DOM del reproductor 2D/3D
+  matchPlayer.initDOM({
+    canvas2d: document.getElementById('matchPlayerCanvas2D'),
+    container3d: document.getElementById('matchPlayerContainer3D'),
+    onTimeUpdate: (cur, dur, playing) => {
+      document.getElementById('playerCurrentTime').textContent = formatSeconds(cur);
+      document.getElementById('playerSeekInput').value = cur.toFixed(1);
+      document.getElementById('btnPlayPause').textContent = playing ? 'Pausar' : 'Reproducir';
+    },
+  });
+
   const fileInput = document.getElementById('fileInput');
   const dropZone = document.getElementById('dropZone');
   const btnSelectFile = document.getElementById('btnSelectFile');
@@ -655,6 +747,7 @@ function setupInteractions() {
   dropZone.addEventListener('click', () => fileInput.click());
 
   btnBackToUpload.addEventListener('click', () => {
+    matchPlayer.pause();
     fileInput.value = '';
     hideLoading();
     document.getElementById('errorSection').classList.add('hidden');
@@ -830,6 +923,57 @@ function setupInteractions() {
 
   canvas.addEventListener('mouseleave', () => {
     tooltip.classList.add('hidden');
+  });
+
+  // Controles de la pestaña Partido 2D/3D
+  const btnMode2D = document.getElementById('btnPlayerMode2D');
+  const btnMode3D = document.getElementById('btnPlayerMode3D');
+  const canvas2D = document.getElementById('matchPlayerCanvas2D');
+  const container3D = document.getElementById('matchPlayerContainer3D');
+  const camWrap = document.getElementById('playerCameraControlWrap');
+  const camSelect = document.getElementById('selectPlayerCamera');
+  const btnPlayPause = document.getElementById('btnPlayPause');
+  const seekInput = document.getElementById('playerSeekInput');
+  const speedBtns = document.getElementById('playerSpeedBtns');
+
+  btnMode2D.addEventListener('click', () => {
+    btnMode2D.classList.add('active');
+    btnMode3D.classList.remove('active');
+    canvas2D.classList.remove('hidden');
+    container3D.classList.add('hidden');
+    camWrap.classList.add('hidden');
+    matchPlayer.setMode('2d');
+  });
+
+  btnMode3D.addEventListener('click', () => {
+    btnMode3D.classList.add('active');
+    btnMode2D.classList.remove('active');
+    canvas2D.classList.add('hidden');
+    container3D.classList.remove('hidden');
+    camWrap.classList.remove('hidden');
+    matchPlayer.setMode('3d');
+  });
+
+  camSelect.addEventListener('change', (e) => {
+    matchPlayer.setCameraMode(e.target.value);
+  });
+
+  btnPlayPause.addEventListener('click', () => {
+    const playing = matchPlayer.togglePlay();
+    btnPlayPause.textContent = playing ? 'Pausar' : 'Reproducir';
+  });
+
+  seekInput.addEventListener('input', (e) => {
+    matchPlayer.seek(Number(e.target.value));
+  });
+
+  speedBtns.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-speed]');
+    if (!btn) return;
+    for (const b of speedBtns.querySelectorAll('.seg-btn')) {
+      b.classList.toggle('active', b === btn);
+    }
+    matchPlayer.setSpeed(Number(btn.dataset.speed));
   });
 }
 

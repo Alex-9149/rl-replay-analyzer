@@ -65,7 +65,7 @@ self.onmessage = async (e) => {
     self.postMessage({ type: 'progress', step: 'Extrayendo telemetría espacial 10Hz (posiciones, velocidades y calor)...', pct: 68 });
     const nd = get_ndarray_with_info(
       replayBytes,
-      ['BallRigidBody', 'SecondsRemaining'],
+      ['BallRigidBody', 'SecondsRemaining', 'CurrentTime'],
       ['PlayerRigidBody', 'PlayerBoost'],
       10.0
     );
@@ -475,43 +475,94 @@ function buildFullAnalysis(timeline, nd, fileName) {
   // Sort matchEvents chronologically
   matchEvents.sort((a, b) => a.time - b.time);
 
-  // Process 10Hz Spatial NDArray for Heatmaps, Avg Boost, Time at 0/100 Boost, and Accurate Avg Speed
+  // Process 10Hz Spatial NDArray for Heatmaps, 2D/3D Replay Player, Avg Boost, and Avg Speed
   const rows = nd?.array_data || [];
+  const globalHeaders = nd?.metadata?.column_headers?.global_headers || [];
+  const hasCurrentTime = globalHeaders.length >= 14;
+  const basePlayerOffset = hasCurrentTime ? 14 : 13;
   const numPlayers = players.length;
+
+  const replaySamples = [];
+  let firstSampleTime = null;
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
-    if (!row || row.length < 13 + numPlayers * 13) continue;
+    if (!row || row.length < basePlayerOffset + numPlayers * 13) continue;
 
-    const ballX = row[0];
-    const ballY = row[1];
+    const ballX = row[0] || 0;
+    const ballY = row[1] || 0;
+    const ballZ = row[2] || 93;
+    const ballVx = row[6] || 0;
+    const ballVy = row[7] || 0;
+    const ballVz = row[8] || 0;
+    const secRem = Math.max(0, Math.round(row[12] || 0));
+    const rawTime = hasCurrentTime ? row[13] : r * 0.1;
+    if (firstSampleTime === null) firstSampleTime = rawTime;
+    const relTime = Math.max(0, Math.round((rawTime - firstSampleTime) * 100) / 100);
+
+    const framePlayers = [];
 
     for (let i = 0; i < numPlayers; i++) {
-      const base = 13 + i * 13;
+      const base = basePlayerOffset + i * 13;
       const px = row[base + 0];
       const py = row[base + 1];
       const pz = row[base + 2];
-      const vx = row[base + 6];
-      const vy = row[base + 7];
-      const vz = row[base + 8];
-      const rawBoost = row[base + 12];
+      const rx = row[base + 3] || 0;
+      const ry = row[base + 4] || 0;
+      const rz = row[base + 5] || 0;
+      const vx = row[base + 6] || 0;
+      const vy = row[base + 7] || 0;
+      const vz = row[base + 8] || 0;
+      const rawBoost = row[base + 12] || 0;
 
-      if (Number.isNaN(px) || Number.isNaN(py)) continue;
+      const validPos = !Number.isNaN(px) && !Number.isNaN(py);
+      const safeX = validPos ? Math.round(px) : 0;
+      const safeY = validPos ? Math.round(py) : 0;
+      const safeZ = validPos ? Math.round(pz) : 17;
 
-      const speedUus = Math.hypot(vx || 0, vy || 0, vz || 0);
-      const speedKmh = uusToKmh(speedUus);
-      const boostPct = rawBoostToPct(rawBoost);
+      const speedUus = Math.hypot(vx, vy, vz);
+      const speedKmh = Math.round(uusToKmh(speedUus) * 10) / 10;
+      const boostPct = Math.round(rawBoostToPct(rawBoost));
 
-      players[i].positions.push({
-        x: Math.round(px),
-        y: Math.round(py),
-        z: Math.round(pz),
-        speedKmh: Math.round(speedKmh * 10) / 10,
-        boostPct: Math.round(boostPct * 10) / 10,
-        ballX: Math.round(ballX),
-        ballY: Math.round(ballY),
+      // Heading angle in XY plane from velocity (or rotation fallback)
+      const heading = speedUus > 25 ? Math.atan2(vy, vx) : rz;
+
+      framePlayers.push({
+        x: safeX,
+        y: safeY,
+        z: safeZ,
+        rx: Math.round(rx * 100) / 100,
+        ry: Math.round(ry * 100) / 100,
+        rz: Math.round(rz * 100) / 100,
+        heading: Math.round(heading * 100) / 100,
+        speedKmh,
+        boostPct,
       });
+
+      if (validPos) {
+        players[i].positions.push({
+          x: safeX,
+          y: safeY,
+          z: safeZ,
+          speedKmh,
+          boostPct,
+          ballX: Math.round(ballX),
+          ballY: Math.round(ballY),
+        });
+      }
     }
+
+    replaySamples.push({
+      t: relTime,
+      clock: secRem,
+      ball: {
+        x: Math.round(ballX),
+        y: Math.round(ballY),
+        z: Math.round(ballZ),
+        speedKmh: Math.round(uusToKmh(Math.hypot(ballVx, ballVy, ballVz))),
+      },
+      cars: framePlayers,
+    });
   }
 
   // Finalize per-player derived percentages and averages
@@ -623,5 +674,6 @@ function buildFullAnalysis(timeline, nd, fileName) {
     players,
     matchEvents,
     boostTimelineSeries,
+    replaySamples,
   };
 }

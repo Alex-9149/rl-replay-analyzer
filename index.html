@@ -98,6 +98,7 @@
             <button type="button" class="main-tab" data-view="stats">Estadísticas</button>
             <button type="button" class="main-tab" data-view="timeline">Línea de Tiempo</button>
             <button type="button" class="main-tab" data-view="spatial">Mapas (Calor y Turbos)</button>
+            <button type="button" class="main-tab" data-view="player">Partido 2D/3D</button>
           </nav>
         </div>
       </header>
@@ -219,6 +220,79 @@
             </div>
 
             <aside id="spatialSidebar" class="spatial-sidebar"></aside>
+          </div>
+        </section>
+
+        <!-- PESTAÑA 5: PARTIDO 2D/3D (REPRODUCTOR INTERACTIVO) -->
+        <section id="view-player" class="tab-pane hidden">
+          <div class="pane-toolbar">
+            <div class="control-inline">
+              <div class="segmented-control">
+                <button id="btnPlayerMode2D" class="seg-btn active" type="button">Vista 2D (Táctica)</button>
+                <button id="btnPlayerMode3D" class="seg-btn" type="button">Vista 3D (Estadio)</button>
+              </div>
+
+              <div id="playerCameraControlWrap" class="control-inline hidden">
+                <span class="toolbar-label">Cámara 3D:</span>
+                <select id="selectPlayerCamera" class="select-input">
+                  <option value="orbit">Libre (Rotar con ratón)</option>
+                  <option value="ballcam">Seguimiento del Balón (TV)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Botones de salto directo a los goles del partido -->
+            <div class="control-inline">
+              <span class="toolbar-label">Ir a jugada de gol (-5s):</span>
+              <div id="playerGoalShortcuts" class="filter-pills"></div>
+            </div>
+          </div>
+
+          <div class="player-stage-layout">
+            <div class="player-viewport-box">
+              <!-- Lienzo 2D -->
+              <canvas id="matchPlayerCanvas2D" width="920" height="580"></canvas>
+              <!-- Contenedor WebGL 3D -->
+              <div id="matchPlayerContainer3D" class="player-3d-viewport hidden"></div>
+
+              <!-- Barra inferior de reproducción -->
+              <div class="player-controls-bar">
+                <button id="btnPlayPause" type="button" class="btn-play-toggle">Reproducir</button>
+
+                <span id="playerCurrentTime" class="mono player-time-lbl">0:00</span>
+
+                <div class="player-scrubber-wrap">
+                  <input
+                    id="playerSeekInput"
+                    type="range"
+                    min="0"
+                    max="300"
+                    step="0.1"
+                    value="0"
+                    class="player-scrubber"
+                  />
+                  <div id="playerScrubberMarkers" class="scrubber-markers"></div>
+                </div>
+
+                <span id="playerTotalTime" class="mono player-time-lbl">5:00</span>
+
+                <div class="control-inline">
+                  <span class="toolbar-label">Velocidad:</span>
+                  <div id="playerSpeedBtns" class="segmented-control">
+                    <button type="button" class="seg-btn" data-speed="0.5">0.5x</button>
+                    <button type="button" class="seg-btn active" data-speed="1">1x</button>
+                    <button type="button" class="seg-btn" data-speed="2">2x</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Panel lateral de telemetría en vivo -->
+            <aside class="spatial-sidebar">
+              <h3 class="sidebar-title">Telemetría en Vivo</h3>
+              <p class="sidebar-sub">Velocidad y nivel de turbo instantáneo de cada coche en el segundo actual</p>
+              <div id="playerLiveTelemetry" class="live-telemetry-list"></div>
+            </aside>
           </div>
         </section>
       </main>
